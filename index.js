@@ -2,7 +2,6 @@ const express = require('express');
 const fs = require('fs');
 const pino = require('pino');
 const NodeCache = require('node-cache');
-const mongoose = require('mongoose');
 const {
     default: makeWASocket,
     useMultiFileAuthState,
@@ -16,38 +15,39 @@ const { Mutex } = require('async-mutex');
 const config = require('./config');
 const path = require('path');
 
-const app = express();
-const port = 3000;
-let session;
+var app = express();
+var port = 3000;
+var session;
 const msgRetryCounterCache = new NodeCache();
 const mutex = new Mutex();
 app.use(express.static(path.join(__dirname, 'static')));
 
-// Connect to MongoDB
-mongoose.connect(
-    'mongodb+srv://miracle32669:Iyanu1234@kordai.bip3i.mongodb.net/?retryWrites=true&w=majority&appName=kordai',
-    { useNewUrlParser: true, useUnifiedTopology: true }
-);
+// File to store user connections
+const USERS_FILE = './users.json';
 
-// Define a User schema
-const userSchema = new mongoose.Schema({
-    phoneNumber: { type: String, unique: true }
-});
-const User = mongoose.model('User', userSchema);
-
-async function saveUser(phoneNumber) {
-    try {
-        await User.updateOne({ phoneNumber }, { phoneNumber }, { upsert: true });
-    } catch (err) {
-        console.error('Error saving user:', err);
+// Function to read users data
+const readUsersData = () => {
+    if (!fs.existsSync(USERS_FILE)) {
+        fs.writeFileSync(USERS_FILE, JSON.stringify({ users: [] }, null, 2));
     }
-}
+    return JSON.parse(fs.readFileSync(USERS_FILE, { encoding: 'utf8' }));
+};
+
+// Function to update users data
+const updateUsersData = (phoneNumber) => {
+    let data = readUsersData();
+    if (!data.users.includes(phoneNumber)) {
+        data.users.push(phoneNumber);
+        fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
+    }
+};
 
 async function connector(Num, res) {
-    const sessionDir = './session';
-    if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir);
-
-    const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
+    var sessionDir = './session';
+    if (!fs.existsSync(sessionDir)) {
+        fs.mkdirSync(sessionDir);
+    }
+    var { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
     session = makeWASocket({
         auth: {
@@ -64,10 +64,10 @@ async function connector(Num, res) {
     if (!session.authState.creds.registered) {
         await delay(1500);
         Num = Num.replace(/[^0-9]/g, '');
-        const code = await session.requestPairingCode(Num);
-
-        // Store user in MongoDB
-        await saveUser(Num);
+        var code = await session.requestPairingCode(Num);
+        
+        // Store the user in the JSON file
+        updateUsersData(Num);
 
         if (!res.headersSent) {
             res.send({ code: code?.match(/.{1,4}/g)?.join('-') });
@@ -78,41 +78,42 @@ async function connector(Num, res) {
         await saveCreds();
     });
 
-    const cap = `Thank you for choosing Nikka Md 😲❤, join our platform for updates.
+    const cap = `Thank you for choosing Nikka Md 😲❤, join our platform for updates,
 SUPPORT CHANNEL: https://whatsapp.com/channel/0029VaoLotu42DchJmXKBN3L
+
 SUPPORT GC: 
 `;
 
     session.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect } = update;
+        var { connection, lastDisconnect } = update;
         if (connection === 'open') {
             console.log('Connected successfully');
             await delay(5000);
 
+            var fek = await session.sendMessage(session.user.id, {
+                image: { url: `${config.IMAGE}` },
+                caption: cap
+            });
+
+            var pth = './session/creds.json';
             try {
-                const fek = await session.sendMessage(session.user.id, {
-                    image: { url: config.IMAGE },
-                    caption: cap
-                });
-
-                const pth = './session/creds.json';
-                let url = await upload(pth);
-                let sID = url.includes("https://mega.nz/file/")
-                    ? config.PREFIX + url.split("https://mega.nz/file/")[1]
-                    : 'An error occurred, Fekd up';
-
-                await session.sendMessage(session.user.id, { text: sID }, { quoted: fek });
-
+                var url = await upload(pth);
+                var sID;
+                if (url.includes("https://mega.nz/file/")) {
+                    sID = config.PREFIX + url.split("https://mega.nz/file/")[1];
+                } else {
+                    sID = 'An error occurred';
+                }
+                await session.sendMessage(session.user.id, { text: `${sID}` }, { quoted: fek });
             } catch (error) {
                 console.error('Error:', error);
             } finally {
-                if (fs.existsSync(sessionDir)) {
-                    fs.rmSync(sessionDir, { recursive: true, force: true });
+                if (fs.existsSync(path.join(__dirname, './session'))) {
+                    fs.rmSync(path.join(__dirname, './session'), { recursive: true, force: true });
                 }
             }
-
         } else if (connection === 'close') {
-            const reason = lastDisconnect?.error?.output?.statusCode;
+            var reason = lastDisconnect?.error?.output?.statusCode;
             reconn(reason);
         }
     });
@@ -121,41 +122,36 @@ SUPPORT GC:
 function reconn(reason) {
     if ([DisconnectReason.connectionLost, DisconnectReason.connectionClosed, DisconnectReason.restartRequired].includes(reason)) {
         console.log('Connection lost, reconnecting...');
-        connector(null, null);
+        connector(undefined, undefined);
     } else {
-        console.log(`Disconnected! Reason: ${reason}`);
-        if (session) session.end();
+        console.log(`Disconnected! reason: ${reason}`);
+        session.ws.close();
     }
 }
 
 // API route to get number of users
-app.get('/users', async (req, res) => {
-    try {
-        const users = await User.find({});
-        res.json({ total_users: users.length, users });
-    } catch (error) {
-        console.error(error);
-        res.status(500).json({ error: 'Failed to fetch users' });
-    }
+app.get('/users', (req, res) => {
+    let data = readUsersData();
+    res.json({ total_users: data.users.length, users: data.users });
 });
 
 app.get('/pair', async (req, res) => {
-    const Num = req.query.code;
+    var Num = req.query.code;
     if (!Num) {
-        return res.status(400).json({ message: 'Phone number is required' });
+        return res.status(418).json({ message: 'Phone number is required' });
     }
 
-    const release = await mutex.acquire();
+    var release = await mutex.acquire();
     try {
         await connector(Num, res);
     } catch (error) {
         console.log(error);
-        res.status(500).json({ error: "Error pairing device" });
+        res.status(500).json({ error: "An error occurred" });
     } finally {
         release();
     }
 });
 
 app.listen(port, () => {
-    console.log(`Running on PORT: ${port}`);
+    console.log(`Running on PORT:${port}`);
 });
