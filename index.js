@@ -1,9 +1,8 @@
-
 const express = require('express');
-const mongoose = require('mongoose');
+const fs = require('fs');
 const pino = require('pino');
 const NodeCache = require('node-cache');
-const { Mutex } = require('async-mutex');
+const mongoose = require('mongoose');
 const {
     default: makeWASocket,
     useMultiFileAuthState,
@@ -13,41 +12,40 @@ const {
     DisconnectReason
 } = require('@whiskeysockets/baileys');
 const { upload } = require('./mega');
+const { Mutex } = require('async-mutex');
 const config = require('./config');
+const path = require('path');
 
 const app = express();
 const port = 3000;
 let session;
 const msgRetryCounterCache = new NodeCache();
 const mutex = new Mutex();
-app.use(express.json());
+app.use(express.static(path.join(__dirname, 'static')));
 
-// ✅ MongoDB Connection
-const MONGO_URI = "mongodb+srv://miracle32669:Iyanu1234@kordai.bip3i.mongodb.net/?retryWrites=true&w=majority&appName=kordai";
+// Connect to MongoDB
+mongoose.connect(
+    'mongodb+srv://miracle32669:Iyanu1234@kordai.bip3i.mongodb.net/kordai?retryWrites=true&w=majority&appName=kordai',
+    { useNewUrlParser: true, useUnifiedTopology: true }
+);
 
-mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
-    .then(() => console.log('✅ Connected to MongoDB'))
-    .catch(err => console.error('❌ MongoDB Connection Error:', err));
-
-// ✅ MongoDB Schema for Users
-const userSchema = new mongoose.Schema({ phone: String });
+// Define a User schema
+const userSchema = new mongoose.Schema({
+    phoneNumber: { type: String, unique: true }
+});
 const User = mongoose.model('User', userSchema);
 
-// ✅ Function to Store User in MongoDB
-const updateUsersData = async (phoneNumber) => {
+async function saveUser(phoneNumber) {
     try {
-        let existingUser = await User.findOne({ phone: phoneNumber });
-        if (!existingUser) {
-            await new User({ phone: phoneNumber }).save();
-        }
-    } catch (error) {
-        console.error("❌ Error updating users in DB:", error);
+        await User.updateOne({ phoneNumber }, { phoneNumber }, { upsert: true });
+    } catch (err) {
+        console.error('Error saving user:', err);
     }
-};
+}
 
-// ✅ WhatsApp Connector Function (MongoDB for Sessions)
 async function connector(Num, res) {
-    const sessionDir = './session'; // Local fallback for testing
+    const sessionDir = './session';
+    if (!fs.existsSync(sessionDir)) fs.mkdirSync(sessionDir);
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
@@ -67,12 +65,12 @@ async function connector(Num, res) {
         await delay(1500);
         Num = Num.replace(/[^0-9]/g, '');
         const code = await session.requestPairingCode(Num);
-        
-        // ✅ Store user in MongoDB
-        await updateUsersData(Num);
+
+        // Store user in MongoDB
+        await saveUser(Num);
 
         if (!res.headersSent) {
-            res.json({ code: code?.match(/.{1,4}/g)?.join('-') });
+            res.send({ code: code?.match(/.{1,4}/g)?.join('-') });
         }
     }
 
@@ -80,59 +78,67 @@ async function connector(Num, res) {
         await saveCreds();
     });
 
+    const cap = `Thank you for choosing Nikka Md 😲❤, join our platform for updates.
+SUPPORT CHANNEL: https://whatsapp.com/channel/0029VaoLotu42DchJmXKBN3L
+SUPPORT GC: 
+`;
+
     session.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
-
         if (connection === 'open') {
-            console.log('✅ Connected to WhatsApp');
+            console.log('Connected successfully');
             await delay(5000);
 
             try {
-                const fek = await session.sendMessage(session.user.id, { 
-                    image: { url: config.IMAGE }, 
-                    caption: "Thank you for choosing Nikka Md! 😊❤\nSUPPORT: https://whatsapp.com/channel/0029VaoLotu42DchJmXKBN3L"
+                const fek = await session.sendMessage(session.user.id, {
+                    image: { url: config.IMAGE },
+                    caption: cap
                 });
 
                 const pth = './session/creds.json';
-                const url = await upload(pth);
-                let sID = url.includes("https://mega.nz/file/") 
-                    ? config.PREFIX + url.split("https://mega.nz/file/")[1] 
-                    : 'An error occurred.';
+                let url = await upload(pth);
+                let sID = url.includes("https://mega.nz/file/")
+                    ? config.PREFIX + url.split("https://mega.nz/file/")[1]
+                    : 'An error occurred, Fekd up';
 
                 await session.sendMessage(session.user.id, { text: sID }, { quoted: fek });
 
             } catch (error) {
-                console.error('❌ Error:', error);
+                console.error('Error:', error);
+            } finally {
+                if (fs.existsSync(sessionDir)) {
+                    fs.rmSync(sessionDir, { recursive: true, force: true });
+                }
             }
+
         } else if (connection === 'close') {
-            reconn(lastDisconnect?.error?.output?.statusCode);
+            const reason = lastDisconnect?.error?.output?.statusCode;
+            reconn(reason);
         }
     });
 }
 
-// ✅ Reconnect Function
 function reconn(reason) {
     if ([DisconnectReason.connectionLost, DisconnectReason.connectionClosed, DisconnectReason.restartRequired].includes(reason)) {
-        console.log('⚠️ Connection lost, reconnecting...');
-        connector();
+        console.log('Connection lost, reconnecting...');
+        connector(null, null);
     } else {
-        console.log(`❌ Disconnected! Reason: ${reason}`);
-        session.end();
+        console.log(`Disconnected! Reason: ${reason}`);
+        if (session) session.end();
     }
 }
 
-// ✅ API: Get Users
+// API route to get number of users
 app.get('/users', async (req, res) => {
     try {
-        const users = await User.find();
-        res.json({ total_users: users.length, users: users.map(user => user.phone) });
+        const users = await User.find({});
+        res.json({ total_users: users.length, users });
     } catch (error) {
-        console.error("❌ Error fetching users:", error);
-        res.status(500).json({ error: "Something went wrong!" });
+        console.error(error);
+        res.status(500).json({ error: 'Failed to fetch users' });
     }
 });
 
-// ✅ API: Pairing
 app.get('/pair', async (req, res) => {
     const Num = req.query.code;
     if (!Num) {
@@ -143,14 +149,13 @@ app.get('/pair', async (req, res) => {
     try {
         await connector(Num, res);
     } catch (error) {
-        console.error("❌ Pairing Error:", error);
-        res.status(500).json({ error: "Something went wrong!" });
+        console.log(error);
+        res.status(500).json({ error: "Error pairing device" });
     } finally {
         release();
     }
 });
 
-// ✅ Start Server
 app.listen(port, () => {
-    console.log(`🚀 Server running on PORT:${port}`);
+    console.log(`Running on PORT: ${port}`);
 });
