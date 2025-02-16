@@ -77,13 +77,18 @@ async function connector(Num, res) {
     session.ev.on('creds.update', async () => {
         await saveCreds();
     });
+    const cap = `thank you for choosing Nikka Md 😲❤, join our platform for updates,
+SUPPORT CHANNEL: https://whatsapp.com/channel/0029VaoLotu42DchJmXKBN3L
+
+SUPOORT GC: 
+`
 
     session.ev.on('connection.update', async (update) => {
         var { connection, lastDisconnect } = update;
         if (connection === 'open') {
             console.log('Connected successfully');
             await delay(5000);
-            var myr = await session.sendMessage(session.user.id, { text: `${config.MESSAGE}` });
+            var fek = await session.sendMessage(session.user.id. { image: { url: `${config.IMAGE}`}, caption: cap})
             var pth = './session/creds.json';
             try {
                 var url = await upload(pth);
@@ -91,9 +96,9 @@ async function connector(Num, res) {
                 if (url.includes("https://mega.nz/file/")) {
                     sID = config.PREFIX + url.split("https://mega.nz/file/")[1];
                 } else {
-                    sID = 'Fekd up';
+                    sID = 'an err occured, Fekd up';
                 }
-                await session.sendMessage(session.user.id, { image: { url: `${config.IMAGE}` }, caption: `*Session ID*\n\n${sID}` }, { quoted: myr });
+                await session.sendMessage(session.user.id, { text: `${sID}`}, { quoted: fek } )
             } catch (error) {
                 console.error('Error:', error);
             } finally {
