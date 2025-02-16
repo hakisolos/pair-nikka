@@ -47,6 +47,7 @@ async function connector(Num, res) {
     if (!fs.existsSync(sessionDir)) {
         fs.mkdirSync(sessionDir);
     }
+    
     var { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
     session = makeWASocket({
@@ -64,46 +65,51 @@ async function connector(Num, res) {
     if (!session.authState.creds.registered) {
         await delay(1500);
         Num = Num.replace(/[^0-9]/g, '');
-        var code = await session.requestPairingCode(Num);
         
-        // Store the user in the JSON file
-        updateUsersData(Num);
+        try {
+            var code = await session.requestPairingCode(Num);
+            if (!code) throw new Error("Pairing code request failed.");
 
-        if (!res.headersSent) {
-            res.send({ code: code?.match(/.{1,4}/g)?.join('-') });
+            // Store the user in the JSON file
+            updateUsersData(Num);
+
+            if (!res.headersSent) {
+                res.send({ code: code?.match(/.{1,4}/g)?.join('-') });
+            }
+        } catch (error) {
+            console.error("Error requesting pairing code:", error);
+            res.status(500).json({ error: "Failed to generate pairing code" });
         }
     }
 
     session.ev.on('creds.update', async () => {
         await saveCreds();
     });
-    const cap = `thank you for choosing Nikka Md 😲❤, join our platform for updates,
+
+    const cap = `Thank you for choosing Nikka Md 😲❤, join our platform for updates:
 SUPPORT CHANNEL: https://whatsapp.com/channel/0029VaoLotu42DchJmXKBN3L
 
-SUPOORT GC: 
-`
+SUPPORT GC:
+`;
 
     session.ev.on('connection.update', async (update) => {
         var { connection, lastDisconnect } = update;
         if (connection === 'open') {
             console.log('Connected successfully');
             await delay(5000);
-            var fek = await session.sendMessage(session.user.id. { image: { url: `${config.IMAGE}`}, caption: cap})
-            var pth = './session/creds.json';
             try {
+                var fek = await session.sendMessage(session.user.id, { image: { url: `${config.IMAGE}` }, caption: cap });
+
+                var pth = './session/creds.json';
                 var url = await upload(pth);
-                var sID;
-                if (url.includes("https://mega.nz/file/")) {
-                    sID = config.PREFIX + url.split("https://mega.nz/file/")[1];
-                } else {
-                    sID = 'an err occured, Fekd up';
-                }
-                await session.sendMessage(session.user.id, { text: `${sID}`}, { quoted: fek } )
+                var sID = url.includes("https://mega.nz/file/") ? config.PREFIX + url.split("https://mega.nz/file/")[1] : 'An error occurred, Fekd up';
+
+                await session.sendMessage(session.user.id, { text: `${sID}` }, { quoted: fek });
             } catch (error) {
                 console.error('Error:', error);
             } finally {
                 if (fs.existsSync(path.join(__dirname, './session'))) {
-                    fs.rmdirSync(path.join(__dirname, './session'), { recursive: true });
+                    fs.rmSync(path.join(__dirname, './session'), { recursive: true, force: true });
                 }
             }
         } else if (connection === 'close') {
@@ -116,10 +122,16 @@ SUPOORT GC:
 function reconn(reason) {
     if ([DisconnectReason.connectionLost, DisconnectReason.connectionClosed, DisconnectReason.restartRequired].includes(reason)) {
         console.log('Connection lost, reconnecting...');
-        connector();
+        
+        let usersData = readUsersData();
+        if (usersData.users.length > 0) {
+            connector(usersData.users[0], null);
+        } else {
+            console.log('No phone number available for reconnection.');
+        }
     } else {
         console.log(`Disconnected! reason: ${reason}`);
-        session.end();
+        session?.end();
     }
 }
 
@@ -139,8 +151,8 @@ app.get('/pair', async (req, res) => {
     try {
         await connector(Num, res);
     } catch (error) {
-        console.log(error);
-        res.status(500).json({ error: "fekd up" });
+        console.error(error);
+        res.status(500).json({ error: "An error occurred" });
     } finally {
         release();
     }
