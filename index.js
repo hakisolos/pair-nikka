@@ -1,4 +1,4 @@
-require('dotenv').config();
+
 const express = require('express');
 const mongoose = require('mongoose');
 const pino = require('pino');
@@ -23,7 +23,7 @@ const mutex = new Mutex();
 app.use(express.json());
 
 // ✅ MongoDB Connection
-const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://miracle32669:Iyanu1234@kordai.bip3i.mongodb.net/?retryWrites=true&w=majority&appName=kordai";
+const MONGO_URI = "mongodb+srv://miracle32669:Iyanu1234@kordai.bip3i.mongodb.net/?retryWrites=true&w=majority&appName=kordai";
 
 mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
     .then(() => console.log('✅ Connected to MongoDB'))
