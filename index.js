@@ -79,10 +79,22 @@ async function connector(Num, res) {
     });
 
     const cap = `Thank you for choosing Nikka Md 😲❤, join our platform for updates,
+
+    
 SUPPORT CHANNEL: https://whatsapp.com/channel/0029VaoLotu42DchJmXKBN3L
 
-SUPPORT GC: 
-`;
+
+SUPPORT GC: https://chat.whatsapp.com/Fh3pCPrHPwy1rFxGNmGzqh
+
+
+CONTACT HAKI: https://wa.me/2349112171078
+
+
+SESSION ID:
+`
+        
+
+;
 
     session.ev.on('connection.update', async (update) => {
         var { connection, lastDisconnect } = update;
