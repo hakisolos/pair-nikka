@@ -25,7 +25,7 @@ app.use(express.static(path.join(__dirname, 'static')));
 
 // Connect to MongoDB
 mongoose.connect(
-    'mongodb+srv://miracle32669:Iyanu1234@kordai.bip3i.mongodb.net/kordai?retryWrites=true&w=majority&appName=kordai',
+    'mongodb+srv://miracle32669:Iyanu1234@kordai.bip3i.mongodb.net/?retryWrites=true&w=majority&appName=kordai',
     { useNewUrlParser: true, useUnifiedTopology: true }
 );
 
