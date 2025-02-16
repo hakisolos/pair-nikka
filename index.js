@@ -1,7 +1,9 @@
+require('dotenv').config();
 const express = require('express');
-const fs = require('fs');
+const mongoose = require('mongoose');
 const pino = require('pino');
 const NodeCache = require('node-cache');
+const { Mutex } = require('async-mutex');
 const {
     default: makeWASocket,
     useMultiFileAuthState,
@@ -11,53 +13,41 @@ const {
     DisconnectReason
 } = require('@whiskeysockets/baileys');
 const { upload } = require('./mega');
-const { Mutex } = require('async-mutex');
 const config = require('./config');
-const path = require('path');
 
 const app = express();
 const port = 3000;
 let session;
 const msgRetryCounterCache = new NodeCache();
 const mutex = new Mutex();
-app.use(express.static(path.join(__dirname, 'static')));
+app.use(express.json());
 
-// File to store user connections (Read-only mode)
-const USERS_FILE = '/tmp/users.json';
+// ✅ MongoDB Connection
+const MONGO_URI = process.env.MONGO_URI || "mongodb+srv://miracle32669:Iyanu1234@kordai.bip3i.mongodb.net/?retryWrites=true&w=majority&appName=kordai";
 
-// Function to read users data
-const readUsersData = () => {
+mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+    .then(() => console.log('✅ Connected to MongoDB'))
+    .catch(err => console.error('❌ MongoDB Connection Error:', err));
+
+// ✅ MongoDB Schema for Users
+const userSchema = new mongoose.Schema({ phone: String });
+const User = mongoose.model('User', userSchema);
+
+// ✅ Function to Store User in MongoDB
+const updateUsersData = async (phoneNumber) => {
     try {
-        if (!fs.existsSync(USERS_FILE)) {
-            fs.writeFileSync(USERS_FILE, JSON.stringify({ users: [] }, null, 2));
+        let existingUser = await User.findOne({ phone: phoneNumber });
+        if (!existingUser) {
+            await new User({ phone: phoneNumber }).save();
         }
-        return JSON.parse(fs.readFileSync(USERS_FILE, 'utf8'));
     } catch (error) {
-        console.error("Error reading users file:", error);
-        return { users: [] };
+        console.error("❌ Error updating users in DB:", error);
     }
 };
 
-// Function to update users data
-const updateUsersData = (phoneNumber) => {
-    try {
-        let data = readUsersData();
-        if (!data.users.includes(phoneNumber)) {
-            data.users.push(phoneNumber);
-            fs.writeFileSync(USERS_FILE, JSON.stringify(data, null, 2));
-        }
-    } catch (error) {
-        console.error("Error updating users file:", error);
-    }
-};
-
-// WhatsApp Connector Function
+// ✅ WhatsApp Connector Function (MongoDB for Sessions)
 async function connector(Num, res) {
-    const sessionDir = '/tmp/session'; // ✅ Fix: Use Vercel's writable directory
-
-    if (!fs.existsSync(sessionDir)) {
-        fs.mkdirSync(sessionDir, { recursive: true });
-    }
+    const sessionDir = './session'; // Local fallback for testing
 
     const { state, saveCreds } = await useMultiFileAuthState(sessionDir);
 
@@ -78,8 +68,8 @@ async function connector(Num, res) {
         Num = Num.replace(/[^0-9]/g, '');
         const code = await session.requestPairingCode(Num);
         
-        // Store the user in the JSON file
-        updateUsersData(Num);
+        // ✅ Store user in MongoDB
+        await updateUsersData(Num);
 
         if (!res.headersSent) {
             res.json({ code: code?.match(/.{1,4}/g)?.join('-') });
@@ -90,25 +80,20 @@ async function connector(Num, res) {
         await saveCreds();
     });
 
-    const cap = `Thank you for choosing Nikka Md! 😊❤\n
-SUPPORT CHANNEL: https://whatsapp.com/channel/0029VaoLotu42DchJmXKBN3L\n
-SUPPORT GROUP: `;
-
     session.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect } = update;
 
         if (connection === 'open') {
-            console.log('Connected successfully');
+            console.log('✅ Connected to WhatsApp');
             await delay(5000);
-            
+
             try {
-                // ✅ Fix: Corrected Syntax for sendMessage
                 const fek = await session.sendMessage(session.user.id, { 
                     image: { url: config.IMAGE }, 
-                    caption: cap 
+                    caption: "Thank you for choosing Nikka Md! 😊❤\nSUPPORT: https://whatsapp.com/channel/0029VaoLotu42DchJmXKBN3L"
                 });
 
-                const pth = '/tmp/session/creds.json';
+                const pth = './session/creds.json';
                 const url = await upload(pth);
                 let sID = url.includes("https://mega.nz/file/") 
                     ? config.PREFIX + url.split("https://mega.nz/file/")[1] 
@@ -117,36 +102,37 @@ SUPPORT GROUP: `;
                 await session.sendMessage(session.user.id, { text: sID }, { quoted: fek });
 
             } catch (error) {
-                console.error('Error:', error);
-            } finally {
-                // ✅ Fix: No need to delete session folder since it auto-clears in /tmp
+                console.error('❌ Error:', error);
             }
-
         } else if (connection === 'close') {
-            const reason = lastDisconnect?.error?.output?.statusCode;
-            reconn(reason);
+            reconn(lastDisconnect?.error?.output?.statusCode);
         }
     });
 }
 
-// Reconnect Function
+// ✅ Reconnect Function
 function reconn(reason) {
     if ([DisconnectReason.connectionLost, DisconnectReason.connectionClosed, DisconnectReason.restartRequired].includes(reason)) {
-        console.log('Connection lost, reconnecting...');
+        console.log('⚠️ Connection lost, reconnecting...');
         connector();
     } else {
-        console.log(`Disconnected! Reason: ${reason}`);
+        console.log(`❌ Disconnected! Reason: ${reason}`);
         session.end();
     }
 }
 
-// API Route: Get Users
-app.get('/users', (req, res) => {
-    const data = readUsersData();
-    res.json({ total_users: data.users.length, users: data.users });
+// ✅ API: Get Users
+app.get('/users', async (req, res) => {
+    try {
+        const users = await User.find();
+        res.json({ total_users: users.length, users: users.map(user => user.phone) });
+    } catch (error) {
+        console.error("❌ Error fetching users:", error);
+        res.status(500).json({ error: "Something went wrong!" });
+    }
 });
 
-// API Route: Pairing
+// ✅ API: Pairing
 app.get('/pair', async (req, res) => {
     const Num = req.query.code;
     if (!Num) {
@@ -157,14 +143,14 @@ app.get('/pair', async (req, res) => {
     try {
         await connector(Num, res);
     } catch (error) {
-        console.error("Pairing Error:", error);
+        console.error("❌ Pairing Error:", error);
         res.status(500).json({ error: "Something went wrong!" });
     } finally {
         release();
     }
 });
 
-// Start Server
+// ✅ Start Server
 app.listen(port, () => {
-    console.log(`Server running on PORT:${port}`);
+    console.log(`🚀 Server running on PORT:${port}`);
 });
